@@ -19,9 +19,11 @@ period before, a chart you build yourself, top products, top countries and the l
 - English and French (follows the language of Harness).
 - A **demo mode** with made-up figures, to try it before connecting a store.
 
-| This year, visitors and conversion | Today, hour by hour (light theme) | Phone width | Not connected yet |
-|---|---|---|---|
-| ![This year](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/dark-ytd.webp) | ![Today](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/light-today.webp) | ![Phone](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/mobile.webp) | ![Setup](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/setup.webp) |
+| Every period, compared | Two curves, two axes |
+|---|---|
+| ![Every period, compared](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/periods.webp) | ![Two curves, two axes](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/curves.webp) |
+| **From desk to phone** | **Just ask Harness** |
+| ![Phone](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/mobile.webp) | ![Install](https://raw.githubusercontent.com/romainmaxxing/harnessmaxxing-widget-shopify/main/screenshots/install.webp) |
 
 All screenshots show demo data (a fictional store).
 

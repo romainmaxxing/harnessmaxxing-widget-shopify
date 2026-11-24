@@ -19,9 +19,11 @@ period before, a chart you build yourself, top products, top countries and the l
 - English and French (follows the language of Harness).
 - A **demo mode** with made-up figures, to try it before connecting a store.
 
-| This year, visitors and conversion | Today, hour by hour (light theme) | Phone width | Not connected yet |
-|---|---|---|---|
-| ![This year](screenshots/dark-ytd.webp) | ![Today](screenshots/light-today.webp) | ![Phone](screenshots/mobile.webp) | ![Setup](screenshots/setup.webp) |
+| Every period, compared | Two curves, two axes |
+|---|---|
+| ![Every period, compared](screenshots/periods.webp) | ![Two curves, two axes](screenshots/curves.webp) |
+| **From desk to phone** | **Just ask Harness** |
+| ![Phone](screenshots/mobile.webp) | ![Install](screenshots/install.webp) |
 
 All screenshots show demo data (a fictional store).
 

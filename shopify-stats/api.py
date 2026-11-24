@@ -367,9 +367,9 @@ def _fetch(ctx, store):
 
 # ----------------------------------------------------------------------------- demo data
 
-DEMO_PRODUCTS = ["Affiche Montagne Brume", "Poster Vague Indigo", "Cadre chêne 50x70", "Affiche Tokyo Nuit",
-                 "Poster Botanique", "Affiche Désert Rose", "Poster Lune Minimal", "Affiche Phare Breton"]
-DEMO_COUNTRIES = ["France", "Germany", "Belgium", "Switzerland", "Canada", "Spain"]
+DEMO_PRODUCTS = ["Cloudstep Runner, White", "Ridge Trail Boot", "Court Low Suede, Sand", "Chelsea Boot, Black",
+                 "Everyday Knit Sneaker", "High-Top Canvas, Off-White", "Wool Slipper, Grey", "Shoe Care Kit"]
+DEMO_COUNTRIES = ["United States", "Canada", "United Kingdom", "Germany", "Australia", "France"]
 # share of a day's traffic per hour (sums to 1): quiet nights, a lunch bump, a peak around 21 h
 _PROFILE = [0.8, 0.5, 0.3, 0.2, 0.2, 0.3, 0.6, 1.2, 2.0, 2.6, 3.0, 3.4,
             4.2, 4.4, 3.8, 3.6, 3.8, 4.2, 4.8, 5.6, 6.4, 6.8, 5.4, 2.8]
@@ -392,7 +392,7 @@ def _demo(ctx):
         week = 1.15 if d.weekday() in (5, 6) else 1.0
         v = int(max(200, rnd.gauss(1300, 150)) * growth * season * week)
         o = max(1, round(v * rnd.uniform(0.011, 0.018) * (1.1 if d.month in (11, 12) else 1.0)))
-        series["v"][i], series["o"][i], series["s"][i] = v, o, round(o * rnd.uniform(39, 51), 2)
+        series["v"][i], series["o"][i], series["s"][i] = v, o, round(o * rnd.uniform(96, 128), 2)
     hours = _empty_hours(today, True)
     for key, h in hours.items():
         i = (date.fromisoformat(key) - since).days
@@ -407,9 +407,9 @@ def _demo(ctx):
     last, t = [], datetime.now(timezone.utc)
     for i in range(6):
         t -= timedelta(minutes=rnd.randint(12, 140))
-        last.append({"n": f"#{4821 - i}", "at": t.isoformat().replace("+00:00", "Z"),
-                     "total": round(rnd.uniform(29, 129), 2), "pay": pays[i], "ship": ships[i], "canceled": False})
-    return {"shop": {"name": "Atelier Nord", "currency": "EUR"}, "tz": str(tz), "source": "demo", "truncated": False,
+        last.append({"n": f"#{12408 - i}", "at": t.isoformat().replace("+00:00", "Z"),
+                     "total": round(rnd.uniform(59, 249), 2), "pay": pays[i], "ship": ships[i], "canceled": False})
+    return {"shop": {"name": "Stride Supply", "currency": "USD"}, "tz": str(tz), "source": "demo", "truncated": False,
             "visitors": True, "today": today.isoformat(), "hour": now.hour, "series": series, "hours": hours,
             "last": last, "at": int(time.time())}
 

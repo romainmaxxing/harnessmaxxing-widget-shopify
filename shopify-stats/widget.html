@@ -19,10 +19,9 @@
   /* header */
   .hd { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: none;
-          color: var(--primary-foreground);
-          background: linear-gradient(135deg, var(--primary), color-mix(in oklch, var(--primary) 55%, var(--success)));
-          box-shadow: 0 6px 18px -6px color-mix(in oklch, var(--primary) 70%, transparent); }
-  .logo svg.i { width: 18px; height: 18px; }
+          background: #fff; box-shadow: 0 0 0 1px color-mix(in oklch, var(--border) 80%, transparent),
+          0 6px 18px -8px rgba(149, 191, 71, .75); }
+  .logo svg { width: 21px; height: 21px; fill: #95bf47; }
   .who { min-width: 0; flex: 1; }
   .who b { display: block; font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .who span { font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -268,7 +267,6 @@
     return el;
   }
   const ICONS = {
-    bag: "M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0",
     refresh: "M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5",
     up: "m7 17 10-10M8 7h9v9", down: "m7 7 10 10M17 8v9H8", flat: "M5 12h14",
     trophy: "M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3",
@@ -278,6 +276,14 @@
     play: "M6 4l14 8-14 8z", check: "M5 12l5 5L20 7",
   };
   const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+  // the Shopify bag (official mark, simple-icons path); the "S" is a cut-out, shown on a white tile
+  const SHOPIFY_PATH = "M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z";
+  function shopifyLogo() {
+    const el = s("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
+    el.append(s("path", { d: SHOPIFY_PATH }));
+    return el;
+  }
+
   function icon(name, cls) {
     const el = s("svg", { viewBox: "0 0 24 24", class: cls || "i", "aria-hidden": "true" });
     el.append(s("path", { d: ICONS[name] }));
@@ -459,7 +465,7 @@
     if (d.source === "orders") note(L.fallback);
     if (d.truncated) note(L.truncated);
     fill(app,
-      h("div", { class: "hd" }, h("div", { class: "logo" }, icon("bag")),
+      h("div", { class: "hd" }, h("div", { class: "logo", title: "Shopify" }, shopifyLogo()),
         h("div", { class: "who" }, h("b", { text: d.shop.name }), sub), rf),
       h("div", { class: "filters" }, box.chips, box.range),
       ...notes,
@@ -707,7 +713,7 @@
       const li = h("li"); li.innerHTML = step; ol.append(li);
     }
     return h("div", { class: "setup" },
-      h("div", { class: "hd" }, h("div", { class: "logo" }, icon("bag")), h("div", { class: "who" }, h("b", { text: L.setupTitle }))),
+      h("div", { class: "hd" }, h("div", { class: "logo", title: "Shopify" }, shopifyLogo()), h("div", { class: "who" }, h("b", { text: L.setupTitle }))),
       res.error && res.error !== "missing_keys"
         ? h("div", { class: "note" }, icon("alert"), h("span", { text: `${L.err[res.error] || L.err.failed} ${res.message || ""}` })) : null,
       ol,

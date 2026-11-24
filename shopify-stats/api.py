@@ -1,16 +1,21 @@
 """Shopify stats - HTML widget for Harness Maxxing (read only).
 
-The widget (widget.html) calls GET `stats` and draws everything client side. This file only reads the
-store through the Shopify Admin GraphQL API and returns one JSON document:
+The widget (widget.html) draws everything client side from two calls, both read only:
 
-    {ok, lang, demo, data: {shop, source, days[60], periods{1,7,30}: {top, countries}, last, visitors}}
+    GET stats          {ok, lang, demo, data: {shop, tz, source, visitors, today, hour,
+                        series: {since, s[], o[], v[]|null}   one value per day, since -> today (about 2 years)
+                        hours: {date: {s[24], o[24], v[24]|null}}  today and the 2 days before, shop time
+                        last[], at}}
+    GET top?from=YYYY-MM-DD&to=YYYY-MM-DD    {ok, data: {top[], countries[], partial}}  for any period
+
+s = sales, o = orders, v = online store visitors. Periods, comparisons, weeks and ratios are computed by the widget.
 
 Keys (Settings -> Keys), first match wins:
     store   SHOPIFY_STORE or SHOPIFY_SHOP              myshop.myshopify.com
     token   SHOPIFY_ADMIN_TOKEN or SHOPIFY_ADMIN_ACCESS_TOKEN   shpat_...
     or      SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET  (client_credentials grant, token cached 24 h)
-Scopes: read_orders (required), read_reports / read_analytics (ShopifyQL: net sales, visitors, countries).
-Without ShopifyQL the widget falls back to the orders of the last 60 days.
+Scopes: read_orders (required), read_reports (ShopifyQL: net sales, visitors, countries, 2 years of history).
+Without ShopifyQL the widget falls back to the orders of the last FALLBACK_DAYS days (gross totals).
 
 Stdlib only, every request has a timeout, results are cached CACHE_S seconds in state_dir.
 """
@@ -21,17 +26,20 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 API_VERSION = "2025-10"
 CACHE_S = 300          # normal cache
+CLOSED_CACHE_S = 3600  # top lists of a period that is over
 FORCE_MIN_S = 30       # a forced refresh never hits Shopify more often than this
 DEADLINE_S = 9         # total budget of one refresh
-DAYS = 60              # 30 days shown + the 30 before, for the comparison
-PERIODS = (1, 7, 30)
-UA = "harness-maxxing-shopify-stats/1.0"
+SERIES_DAYS = 730      # 12 months + the 12 before (and always since January 1 of last year)
+HOUR_DAYS = 3          # today, yesterday and the day before, hour by hour
+FALLBACK_DAYS = 62     # history read from the orders when ShopifyQL is not allowed
+MAX_RANGE_DAYS = 800
+UA = "harness-maxxing-shopify-stats/1.1"
 
 
 class ShopError(Exception):
@@ -173,109 +181,175 @@ def _num(v):
         return 0.0
 
 
-# ----------------------------------------------------------------------------- data sources
 
-def _span(days):
-    return f"SINCE -{days - 1}d UNTIL today"
+# ----------------------------------------------------------------------------- shapes
+
+def _series_start(today):
+    return min(date(today.year - 1, 1, 1), today - timedelta(days=SERIES_DAYS - 1))
 
 
-def _from_shopifyql(c):
-    """Net sales, orders and visitors per day + top products and countries per period."""
-    queries = {"sales": f"FROM sales SHOW total_sales, orders {_span(DAYS)} TIMESERIES day",
-               "visits": f"FROM sessions SHOW online_store_visitors {_span(DAYS)} TIMESERIES day"}
-    for p in PERIODS:
-        queries[f"top{p}"] = (f"FROM sales SHOW total_sales, net_items_sold GROUP BY product_title {_span(p)} "
-                              f"ORDER BY total_sales DESC LIMIT 8")
-        queries[f"geo{p}"] = (f"FROM sales SHOW total_sales GROUP BY billing_country {_span(p)} "
-                              f"ORDER BY total_sales DESC LIMIT 6")
-    # Sales first and alone: if ShopifyQL is not allowed for this token, nothing else is sent.
-    sales = c.ql(queries.pop("sales"))
+def _empty_series(since, today, visitors):
+    n = (today - since).days + 1
+    return {"since": since.isoformat(), "s": [0.0] * n, "o": [0] * n, "v": [0] * n if visitors else None}
+
+
+def _empty_hours(today, visitors):
+    return {(today - timedelta(days=i)).isoformat(): {"s": [0.0] * 24, "o": [0] * 24,
+                                                      "v": [0] * 24 if visitors else None}
+            for i in range(HOUR_DAYS)}
+
+
+def _put(series, day, key, value):
+    i = (date.fromisoformat(day) - date.fromisoformat(series["since"])).days
+    if 0 <= i < len(series[key]):
+        series[key][i] += value
+
+
+def _local(iso, tz):
+    t = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(tz)
+    return t.date().isoformat(), t.hour
+
+
+def _round(series):
+    series["s"] = [round(x, 2) for x in series["s"]]
+    return series
+
+
+def _parallel(c, queries):
+    """{name: ShopifyQL} -> {name: rows or None}; an optional query that fails does not break the widget."""
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {k: pool.submit(c.ql, q) for k, q in queries.items()}
-        res = {}
+        out = {}
         for k, f in futures.items():
             try:
-                res[k] = f.result()
+                out[k] = f.result()
             except ShopError:
-                res[k] = None           # one optional query failing does not break the widget
-    per = {}
-    for r in sales:
-        per[r["day"]] = {"s": round(_num(r.get("total_sales")), 2), "o": int(_num(r.get("orders"))), "v": None}
+                out[k] = None
+    return out
+
+
+# ----------------------------------------------------------------------------- ShopifyQL source
+
+def _from_shopifyql(c, tz, today):
+    since = _series_start(today)
+    span = f"SINCE {since.isoformat()} UNTIL {today.isoformat()}"
+    hspan = f"SINCE {(today - timedelta(days=HOUR_DAYS - 1)).isoformat()} UNTIL {today.isoformat()}"
+    # Sales first and alone: if ShopifyQL is not allowed for this token, nothing else is sent.
+    sales = c.ql(f"FROM sales SHOW total_sales, orders {span} TIMESERIES day")
+    res = _parallel(c, {"visits": f"FROM sessions SHOW online_store_visitors {span} TIMESERIES day",
+                        "hsales": f"FROM sales SHOW total_sales, orders {hspan} TIMESERIES hour",
+                        "hvisits": f"FROM sessions SHOW online_store_visitors {hspan} TIMESERIES hour"})
     visitors = res["visits"] is not None
+    series = _empty_series(since, today, visitors)
+    for r in sales:
+        _put(series, r["day"], "s", _num(r.get("total_sales")))
+        _put(series, r["day"], "o", int(_num(r.get("orders"))))
     for r in res["visits"] or []:
-        per.setdefault(r["day"], {"s": 0, "o": 0})["v"] = int(_num(r.get("online_store_visitors")))
-    periods = {}
-    for p in PERIODS:
-        top = [{"t": r["product_title"], "s": round(_num(r.get("total_sales")), 2), "q": int(_num(r.get("net_items_sold")))}
-               for r in res[f"top{p}"] or [] if r.get("product_title") and _num(r.get("total_sales")) > 0][:5]
-        geo = [{"c": r["billing_country"], "s": round(_num(r.get("total_sales")), 2)}
-               for r in res[f"geo{p}"] or [] if r.get("billing_country") and _num(r.get("total_sales")) > 0][:5]
-        periods[str(p)] = {"top": top, "countries": geo}
-    return per, periods, visitors
+        _put(series, r["day"], "v", int(_num(r.get("online_store_visitors"))))
+    hours = _empty_hours(today, visitors and res["hvisits"] is not None)
+    for r in res["hsales"] or []:
+        d, h = _local(r["hour"], tz)
+        if d in hours:
+            hours[d]["s"][h] = round(hours[d]["s"][h] + _num(r.get("total_sales")), 2)
+            hours[d]["o"][h] += int(_num(r.get("orders")))
+    for r in res["hvisits"] or []:
+        d, h = _local(r["hour"], tz)
+        if d in hours and hours[d]["v"] is not None:
+            hours[d]["v"][h] += int(_num(r.get("online_store_visitors")))
+    return _round(series), hours, visitors
 
 
-def _from_orders(c, tz):
-    """Fallback without ShopifyQL: gross totals of the orders of the last DAYS days (at most 1000 orders)."""
-    start = (datetime.now(tz) - timedelta(days=DAYS - 1)).date()
-    per, items, after, truncated = {}, [], None, False
+def _top_shopifyql(c, a, b):
+    span = f"SINCE {a} UNTIL {b}"
+    res = _parallel(c, {
+        "top": f"FROM sales SHOW total_sales, net_items_sold GROUP BY product_title {span} "
+               f"ORDER BY total_sales DESC LIMIT 8",
+        "geo": f"FROM sales SHOW total_sales GROUP BY billing_country {span} ORDER BY total_sales DESC LIMIT 6"})
+    if res["top"] is None and res["geo"] is None:
+        raise ShopError("query", "ShopifyQL refused the top lists")
+    top = [{"t": r["product_title"], "s": round(_num(r.get("total_sales")), 2), "q": int(_num(r.get("net_items_sold")))}
+           for r in res["top"] or [] if r.get("product_title") and _num(r.get("total_sales")) > 0][:5]
+    geo = [{"c": r["billing_country"], "s": round(_num(r.get("total_sales")), 2)}
+           for r in res["geo"] or [] if r.get("billing_country") and _num(r.get("total_sales")) > 0][:5]
+    return {"top": top, "countries": geo, "partial": False}
+
+
+# ----------------------------------------------------------------------------- orders source (fallback)
+
+def _orders(c, start, end, tz):
+    """Orders created between two local dates (included), without the cancelled and test ones (1000 at most)."""
+    q = f"created_at:>={start.isoformat()} created_at:<{(end + timedelta(days=1)).isoformat()}"
+    out, after, truncated = [], None, False
     for page in range(20):
-        d = c.gql(ORDERS_Q, {"q": f"created_at:>={start.isoformat()}", "after": after})["orders"]
+        d = c.gql(ORDERS_Q, {"q": q, "after": after})["orders"]
         for o in d["nodes"]:
             if o.get("cancelledAt") or o.get("test"):
                 continue
-            day = datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).astimezone(tz).date().isoformat()
-            x = per.setdefault(day, {"s": 0.0, "o": 0, "v": None})
-            x["s"] = round(x["s"] + _num(o["totalPriceSet"]["shopMoney"]["amount"]), 2)
-            x["o"] += 1
-            for li in o["lineItems"]["nodes"]:
-                items.append((day, li["title"], int(li.get("quantity") or 0),
-                              _num(li["originalTotalSet"]["shopMoney"]["amount"])))
+            t = datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00")).astimezone(tz)
+            if start <= t.date() <= end:
+                out.append((t, _num(o["totalPriceSet"]["shopMoney"]["amount"]), o["lineItems"]["nodes"]))
         if not d["pageInfo"]["hasNextPage"]:
             break
         after = d["pageInfo"]["endCursor"]
         if page == 19 or time.time() > c.deadline - 2:
             truncated = True
             break
-    today = datetime.now(tz).date()
-    periods = {}
-    for p in PERIODS:
-        since = (today - timedelta(days=p - 1)).isoformat()
-        agg = {}
-        for day, title, q, s in items:
-            if day >= since:
-                a = agg.setdefault(title, {"t": title, "s": 0.0, "q": 0})
-                a["s"] += s
-                a["q"] += q
-        top = sorted(agg.values(), key=lambda a: -a["s"])[:5]
-        periods[str(p)] = {"top": [{**a, "s": round(a["s"], 2)} for a in top], "countries": []}
-    return per, periods, truncated
+    return out, truncated
 
 
-def _fold(per, tz):
+def _from_orders(c, tz, today):
+    since = today - timedelta(days=FALLBACK_DAYS - 1)
+    orders, truncated = _orders(c, since, today, tz)
+    series, hours = _empty_series(since, today, False), _empty_hours(today, False)
+    for t, total, _ in orders:
+        d = t.date().isoformat()
+        _put(series, d, "s", total)
+        _put(series, d, "o", 1)
+        if d in hours:
+            hours[d]["s"][t.hour] = round(hours[d]["s"][t.hour] + total, 2)
+            hours[d]["o"][t.hour] += 1
+    return _round(series), hours, truncated
+
+
+def _top_orders(c, tz, a, b):
     today = datetime.now(tz).date()
-    out = []
-    for i in range(DAYS - 1, -1, -1):
-        k = (today - timedelta(days=i)).isoformat()
-        x = per.get(k, {})
-        out.append({"d": k, "s": x.get("s", 0), "o": x.get("o", 0), "v": x.get("v")})
-    return out
+    start = max(a, today - timedelta(days=FALLBACK_DAYS - 1))
+    if start > b:
+        return {"top": [], "countries": [], "partial": True}
+    orders, truncated = _orders(c, start, b, tz)
+    agg = {}
+    for _, _, items in orders:
+        for li in items:
+            x = agg.setdefault(li["title"], {"t": li["title"], "s": 0.0, "q": 0})
+            x["s"] += _num(li["originalTotalSet"]["shopMoney"]["amount"])
+            x["q"] += int(li.get("quantity") or 0)
+    top = sorted(agg.values(), key=lambda x: -x["s"])[:5]
+    return {"top": [{**x, "s": round(x["s"], 2)} for x in top], "countries": [],
+            "partial": truncated or start > a}
+
+
+# ----------------------------------------------------------------------------- refresh
+
+def _tzinfo(name):
+    try:
+        return ZoneInfo(name or "UTC")
+    except Exception:
+        return timezone.utc
 
 
 def _fetch(ctx, store):
     c = Client(ctx, store, time.time() + DEADLINE_S)
     shop = c.gql(SHOP_Q)["shop"]
-    try:
-        tz = ZoneInfo(shop.get("ianaTimezone") or "UTC")
-    except Exception:
-        tz = timezone.utc
+    tz = _tzinfo(shop.get("ianaTimezone"))
+    now = datetime.now(tz)
     truncated = False
     try:
-        per, periods, visitors = _from_shopifyql(c)
+        series, hours, visitors = _from_shopifyql(c, tz, now.date())
         source = "shopifyql"
     except ShopError as e:
         if e.code in ("auth", "network", "timeout"):
             raise
-        per, periods, truncated = _from_orders(c, tz)
+        series, hours, truncated = _from_orders(c, tz, now.date())
         visitors, source = False, "orders"
     try:
         last = [{"n": o["name"], "at": o["createdAt"], "total": round(_num(o["totalPriceSet"]["shopMoney"]["amount"]), 2),
@@ -285,60 +359,74 @@ def _fetch(ctx, store):
     except ShopError:
         last = []
     handle = (shop.get("myshopifyDomain") or store).split(".")[0]
-    return {"shop": {"name": shop.get("name") or handle, "currency": shop.get("currencyCode") or "USD",
-                     "url": (shop.get("primaryDomain") or {}).get("url") or f"https://{store}",
-                     "admin": f"https://admin.shopify.com/store/{handle}"},
+    return {"shop": {"name": shop.get("name") or handle, "currency": shop.get("currencyCode") or "USD"},
             "tz": str(tz), "source": source, "truncated": truncated, "visitors": bool(visitors),
-            "days": _fold(per, tz), "periods": periods, "last": last, "at": int(time.time())}
+            "today": now.date().isoformat(), "hour": now.hour, "series": series, "hours": hours,
+            "last": last, "at": int(time.time())}
 
 
 # ----------------------------------------------------------------------------- demo data
 
 DEMO_PRODUCTS = ["Affiche Montagne Brume", "Poster Vague Indigo", "Cadre chêne 50x70", "Affiche Tokyo Nuit",
-                 "Poster Botanique", "Affiche Désert Rose", "Poster Lune Minimal"]
+                 "Poster Botanique", "Affiche Désert Rose", "Poster Lune Minimal", "Affiche Phare Breton"]
 DEMO_COUNTRIES = ["France", "Germany", "Belgium", "Switzerland", "Canada", "Spain"]
+# share of a day's traffic per hour (sums to 1): quiet nights, a lunch bump, a peak around 21 h
+_PROFILE = [0.8, 0.5, 0.3, 0.2, 0.2, 0.3, 0.6, 1.2, 2.0, 2.6, 3.0, 3.4,
+            4.2, 4.4, 3.8, 3.6, 3.8, 4.2, 4.8, 5.6, 6.4, 6.8, 5.4, 2.8]
+PROFILE = [x / sum(_PROFILE) for x in _PROFILE]
 
 
 def _demo(ctx):
-    """Plausible, made up figures (fixed seed per day) for previews and screenshots."""
-    try:
-        tz = ZoneInfo(ctx["config"].get("timezone") or "UTC")
-    except Exception:
-        tz = timezone.utc
-    today = datetime.now(tz).date()
-    rnd = random.Random(2026)                    # same figures on every call
-    per = {}
-    for i in range(DAYS - 1, -1, -1):
-        d = today - timedelta(days=i)
-        trend = 1 + (DAYS - i) / DAYS * 0.35
-        week = 1.18 if d.weekday() in (5, 6) else 1.0
-        visitors = int(rnd.gauss(1450, 160) * trend * week)
-        orders = max(1, int(visitors * rnd.uniform(0.011, 0.019)))
-        per[d.isoformat()] = {"s": round(orders * rnd.uniform(38, 52), 2), "o": orders, "v": visitors}
-    k = today.isoformat()                        # today is not over: about 60 % of a full day
-    per[k] = {"s": round(per[k]["s"] * 0.6, 2), "o": max(1, int(per[k]["o"] * 0.6)), "v": int(per[k]["v"] * 0.6)}
-    periods = {}
-    for p in PERIODS:
-        total = sum(per[(today - timedelta(days=i)).isoformat()]["s"] for i in range(p))
-        weights = sorted((rnd.uniform(0.4, 1.0) for _ in DEMO_PRODUCTS), reverse=True)
-        names = rnd.sample(DEMO_PRODUCTS, len(DEMO_PRODUCTS))
-        top = [{"t": n, "s": round(total * w / sum(weights) * 0.8, 2), "q": max(1, int(total * w / sum(weights) / 40))}
-               for n, w in zip(names, weights, strict=True)][:5]
-        shares = [0.46, 0.18, 0.12, 0.09, 0.06]
-        periods[str(p)] = {"top": top, "countries": [{"c": c, "s": round(total * s, 2)}
-                                                     for c, s in zip(DEMO_COUNTRIES, shares, strict=False)]}
-    now = datetime.now(timezone.utc)
+    """Plausible, made up figures (same on every call of a day) for previews and screenshots."""
+    tz = _tzinfo(ctx["config"].get("timezone"))
+    now = datetime.now(tz)
+    today = now.date()
+    since = _series_start(today)
+    series = _empty_series(since, today, True)
+    rnd = random.Random(2026)
+    n = len(series["s"])
+    for i in range(n):
+        d = since + timedelta(days=i)
+        growth = 0.7 + 0.6 * i / n
+        season = {11: 1.3, 12: 1.45, 1: 0.9, 7: 0.85, 8: 0.8}.get(d.month, 1.0)
+        week = 1.15 if d.weekday() in (5, 6) else 1.0
+        v = int(max(200, rnd.gauss(1300, 150)) * growth * season * week)
+        o = max(1, round(v * rnd.uniform(0.011, 0.018) * (1.1 if d.month in (11, 12) else 1.0)))
+        series["v"][i], series["o"][i], series["s"][i] = v, o, round(o * rnd.uniform(39, 51), 2)
+    hours = _empty_hours(today, True)
+    for key, h in hours.items():
+        i = (date.fromisoformat(key) - since).days
+        last = now.hour if key == today.isoformat() else 23
+        for x in ("s", "o", "v"):
+            total = series[x][i]
+            vals = [total * PROFILE[k] * rnd.uniform(0.7, 1.3) if k <= last else 0 for k in range(24)]
+            h[x] = [round(y, 2) for y in vals] if x == "s" else [round(y) for y in vals]
+            series[x][i] = round(sum(h[x]), 2) if x == "s" else sum(h[x])
     pays = ["paid", "paid", "paid", "pending", "paid", "refunded"]
     ships = ["unfulfilled", "unfulfilled", "fulfilled", "unfulfilled", "fulfilled", "fulfilled"]
-    last, t = [], now
+    last, t = [], datetime.now(timezone.utc)
     for i in range(6):
         t -= timedelta(minutes=rnd.randint(12, 140))
         last.append({"n": f"#{4821 - i}", "at": t.isoformat().replace("+00:00", "Z"),
                      "total": round(rnd.uniform(29, 129), 2), "pay": pays[i], "ship": ships[i], "canceled": False})
-    return {"shop": {"name": "Atelier Nord", "currency": "EUR", "url": "https://example.com",
-                     "admin": "https://admin.shopify.com"},
-            "tz": str(tz), "source": "demo", "truncated": False, "visitors": True,
-            "days": _fold(per, tz), "periods": periods, "last": last, "at": int(time.time())}
+    return {"shop": {"name": "Atelier Nord", "currency": "EUR"}, "tz": str(tz), "source": "demo", "truncated": False,
+            "visitors": True, "today": today.isoformat(), "hour": now.hour, "series": series, "hours": hours,
+            "last": last, "at": int(time.time())}
+
+
+def _demo_top(ctx, a, b):
+    data = _demo(ctx)
+    since = date.fromisoformat(data["series"]["since"])
+    total = sum(data["series"]["s"][max(0, (a - since).days):(b - since).days + 1])
+    rnd = random.Random(f"{a}{b}")
+    weights = sorted((rnd.uniform(0.35, 1.0) for _ in DEMO_PRODUCTS), reverse=True)
+    names = rnd.sample(DEMO_PRODUCTS, len(DEMO_PRODUCTS))
+    k = 0.75 * total / sum(weights)
+    top = [{"t": n, "s": round(w * k, 2), "q": max(1, round(w * k / 42))}
+           for n, w in zip(names, weights, strict=True)][:5]
+    shares = [0.46, 0.18, 0.12, 0.09, 0.06]
+    return {"top": top, "countries": [{"c": c, "s": round(total * s, 2)}
+                                      for c, s in zip(DEMO_COUNTRIES, shares, strict=False)], "partial": False}
 
 
 # ----------------------------------------------------------------------------- entry point
@@ -347,29 +435,86 @@ def _lang(ctx):
     return "fr" if str(ctx["config"].get("language") or "").startswith("fr") else "en"
 
 
-def handle(ctx, method, path, query, body):
-    if method != "GET" or path != "stats":
-        return 404, {"error": "not_found", "message": f"{method} {path}"}
-    lang = _lang(ctx)
-    if str((query or {}).get("demo", "")) == "1" or _secret(ctx, "SHOPIFY_STATS_DEMO") == "1":
-        return {"ok": True, "lang": lang, "demo": True, "data": _demo(ctx)}
-    store = _store(ctx)
-    if not store:
-        return {"ok": False, "lang": lang, "error": "missing_keys"}
-    cache = Path(ctx["state_dir"]) / "stats.json"
-    force = str((query or {}).get("force", "")) == "1"
+def _range(query):
     try:
-        c = json.loads(cache.read_text())
+        a, b = date.fromisoformat(str(query.get("from"))), date.fromisoformat(str(query.get("to")))
+    except ValueError:
+        return None
+    return (a, b) if a <= b and (b - a).days <= MAX_RANGE_DAYS else None
+
+
+def _read(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _stats(ctx, store, force):
+    cache = Path(ctx["state_dir"]) / "stats.json"
+    c = _read(cache)
+    if c and c.get("store") == store and c.get("v") == 2:
         age = time.time() - c["at"]
-        if c["store"] == store and (age < FORCE_MIN_S or (age < CACHE_S and not force)):
-            return {"ok": True, "lang": lang, "demo": False, "data": c["data"]}
-    except (OSError, ValueError, KeyError):
+        if age < FORCE_MIN_S or (age < CACHE_S and not force):
+            return {"ok": True, "data": c["data"]}
+    else:
         c = None
     try:
         data = _fetch(ctx, store)
     except (ShopError, KeyError, TypeError) as e:   # Key/TypeError: an answer of an unexpected shape
-        stale = c["data"] if c and c.get("store") == store else None
         code = e.code if isinstance(e, ShopError) else "failed"
-        return {"ok": bool(stale), "lang": lang, "demo": False, "data": stale, "error": code, "message": str(e)[:200]}
-    _write_private(cache, {"at": time.time(), "store": store, "data": data})
-    return {"ok": True, "lang": lang, "demo": False, "data": data}
+        return {"ok": bool(c), "data": c["data"] if c else None, "error": code, "message": str(e)[:200]}
+    _write_private(cache, {"v": 2, "at": time.time(), "store": store, "data": data})
+    return {"ok": True, "data": data}
+
+
+def _top(ctx, store, a, b, force):
+    path = Path(ctx["state_dir"]) / "top.json"
+    cache = _read(path) or {}
+    key = f"{store}|{a}|{b}"
+    stats = (_read(Path(ctx["state_dir"]) / "stats.json") or {}).get("data") or {}
+    tz = _tzinfo(stats.get("tz"))
+    ttl = CLOSED_CACHE_S if b < datetime.now(tz).date() else CACHE_S
+    hit = cache.get(key)
+    if hit and (time.time() - hit["at"] < FORCE_MIN_S or (time.time() - hit["at"] < ttl and not force)):
+        return {"ok": True, "data": hit["data"]}
+    try:
+        c = Client(ctx, store, time.time() + DEADLINE_S)
+        if stats.get("source") == "orders":
+            data = _top_orders(c, tz, a, b)
+        else:
+            try:
+                data = _top_shopifyql(c, a.isoformat(), b.isoformat())
+            except ShopError as e:
+                if e.code in ("auth", "network", "timeout"):
+                    raise
+                data = _top_orders(c, tz, a, b)
+    except (ShopError, KeyError, TypeError) as e:
+        code = e.code if isinstance(e, ShopError) else "failed"
+        return {"ok": bool(hit), "data": hit["data"] if hit else None, "error": code, "message": str(e)[:200]}
+    cache[key] = {"at": time.time(), "data": data}
+    cache = dict(sorted(cache.items(), key=lambda kv: kv[1]["at"])[-40:])
+    _write_private(path, cache)
+    return {"ok": True, "data": data}
+
+
+def handle(ctx, method, path, query, body):
+    query = query or {}
+    if method != "GET" or path not in ("stats", "top"):
+        return 404, {"error": "not_found", "message": f"{method} {path}"}
+    lang = _lang(ctx)
+    demo = str(query.get("demo", "")) == "1" or _secret(ctx, "SHOPIFY_STATS_DEMO") == "1"
+    force = str(query.get("force", "")) == "1"
+    rng = None
+    if path == "top":
+        rng = _range(query)
+        if not rng:
+            return 400, {"error": "bad_range", "message": "from and to: YYYY-MM-DD, from <= to"}
+    if demo:
+        data = _demo(ctx) if path == "stats" else _demo_top(ctx, *rng)
+        return {"ok": True, "lang": lang, "demo": True, "data": data}
+    store = _store(ctx)
+    if not store:
+        return {"ok": False, "lang": lang, "demo": False, "error": "missing_keys"}
+    res = _stats(ctx, store, force) if path == "stats" else _top(ctx, store, *rng, force)
+    return {"lang": lang, "demo": False, **res}

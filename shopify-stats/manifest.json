@@ -1,0 +1,10 @@
+{
+  "id": "shopify-stats",
+  "name": {"en": "Shopify stats", "fr": "Stats Shopify"},
+  "type": "widget",
+  "icon": "shopping-bag",
+  "version": "1.0.0",
+  "api": 1,
+  "span": 2,
+  "height": 520
+}

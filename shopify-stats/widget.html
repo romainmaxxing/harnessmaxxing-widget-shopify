@@ -1,0 +1,540 @@
+<!-- Shopify stats - HTML widget for Harness Maxxing. One self-contained file (inline CSS and JS).
+     Data: GET stats from api.py (read only). Colours: the app's theme variables only (dark and light).
+     Every text coming from the store is set with textContent. -->
+<style>
+  :root { --r: var(--radius, 12px); --up: var(--success); --down: var(--destructive); }
+  body { container-type: inline-size; }
+  .w { display: grid; gap: 12px; padding: 2px; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted-foreground); }
+  svg.i { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; }
+
+  /* header */
+  .hd { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .logo { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: none;
+          color: var(--primary-foreground);
+          background: linear-gradient(135deg, var(--primary), color-mix(in oklch, var(--primary) 55%, var(--success)));
+          box-shadow: 0 6px 18px -6px color-mix(in oklch, var(--primary) 70%, transparent); }
+  .logo svg.i { width: 18px; height: 18px; }
+  .who { min-width: 0; flex: 1; }
+  .who b { display: block; font-size: 14px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .who span { font-size: 11.5px; display: flex; align-items: center; gap: 6px; }
+  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--up); flex: none;
+          box-shadow: 0 0 0 0 color-mix(in oklch, var(--up) 60%, transparent); animation: pulse 2.4s infinite; }
+  .live.off { background: var(--warning); animation: none; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .seg { position: relative; display: flex; padding: 3px; border-radius: 999px; background: var(--muted);
+         border: 1px solid var(--border); flex: none; }
+  .seg button { position: relative; z-index: 1; border: 0; background: none; color: var(--muted-foreground);
+                font-family: inherit; font-size: 11.5px; font-weight: 600; line-height: 1; padding: 6px 10px; border-radius: 999px; cursor: pointer;
+                transition: color .2s; }
+  .seg button[aria-pressed="true"] { color: var(--foreground); }
+  .seg button:focus-visible, .btn:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+  .seg i { position: absolute; z-index: 0; top: 3px; bottom: 3px; border-radius: 999px; background: var(--card);
+           box-shadow: 0 1px 3px rgb(0 0 0 / .18); transition: left .25s cubic-bezier(.3,.7,.3,1), width .25s; }
+  .btn { border: 1px solid var(--border); background: none; color: var(--muted-foreground); border-radius: 999px;
+         width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer; flex: none; }
+  .btn:hover { color: var(--foreground); background: var(--muted); }
+  .btn.spin svg { animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* hero + chart */
+  .hero { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r);
+          padding: 14px 14px 6px;
+          background:
+            radial-gradient(120% 90% at 0% 0%, color-mix(in oklch, var(--primary) 16%, transparent), transparent 60%),
+            radial-gradient(80% 70% at 100% 0%, color-mix(in oklch, var(--success) 9%, transparent), transparent 60%),
+            var(--card); }
+  .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .lbl { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+  .big { font-size: clamp(26px, 7cqi, 38px); font-weight: 750; letter-spacing: -.02em; line-height: 1.1; margin-top: 4px; }
+  .cmp { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 4px; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px 2px 5px; border-radius: 999px;
+          font-size: 11.5px; font-weight: 650; }
+  .pill svg.i { width: 12px; height: 12px; stroke-width: 2.6; }
+  .pill.up { color: var(--up); background: color-mix(in oklch, var(--up) 14%, transparent); }
+  .pill.down { color: var(--down); background: color-mix(in oklch, var(--down) 14%, transparent); }
+  .pill.flat { color: var(--muted-foreground); background: var(--muted); }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted-foreground); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 14px; height: 0; border-top: 2px solid var(--primary); }
+  .legend i.prev { border-top: 2px dashed var(--muted-foreground); opacity: .7; }
+  .chart { position: relative; height: 150px; margin: 6px -4px 0; touch-action: pan-y; }
+  .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .chart .grid line { stroke: var(--border); stroke-dasharray: 2 4; }
+  .chart .ax { fill: var(--muted-foreground); font-size: 10px; }
+  .chart .area { fill: url(#fill); }
+  .chart .line { fill: none; stroke: var(--primary); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .prev { fill: none; stroke: var(--muted-foreground); stroke-width: 1.4; stroke-dasharray: 4 4; opacity: .55; }
+  .chart .draw { stroke-dasharray: var(--len); stroke-dashoffset: var(--len); animation: draw 1s ease-out forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .chart .cross { stroke: var(--muted-foreground); stroke-width: 1; opacity: .5; }
+  .chart .dot { fill: var(--card); stroke: var(--primary); stroke-width: 2.4; }
+  .chart .today { fill: var(--primary); }
+  .tip { position: absolute; top: 0; pointer-events: none; padding: 7px 9px; border-radius: 9px; font-size: 11.5px;
+         background: var(--popover, var(--card)); color: var(--foreground); border: 1px solid var(--border);
+         box-shadow: 0 8px 24px -8px rgb(0 0 0 / .35); white-space: nowrap; transform: translateX(-50%); opacity: 0;
+         transition: opacity .12s; }
+  .tip.on { opacity: 1; }
+  .tip b { font-size: 13px; display: block; }
+
+  /* KPI tiles */
+  .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  @container (min-width: 540px) { .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .kpi { border: 1px solid var(--border); border-radius: var(--r); padding: 10px 11px 8px; background: var(--card);
+         display: grid; gap: 2px; min-width: 0; position: relative; overflow: hidden; }
+  .kpi .v { font-size: 18px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi .row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 20px; }
+  .kpi .h { font-size: 11px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .spark { width: 54px; height: 20px; flex: none; }
+  .spark path { fill: none; stroke: var(--primary); stroke-width: 1.6; stroke-linecap: round; opacity: .85; }
+
+  /* bottom panels */
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+  .pn { border: 1px solid var(--border); border-radius: var(--r); padding: 11px 12px; background: var(--card); min-width: 0; }
+  .pn h3 { margin: 0 0 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; }
+  .pn h3 svg.i { color: var(--primary); width: 14px; height: 14px; }
+  .pn h3 small { margin-left: auto; font-weight: 500; font-size: 11px; color: var(--muted-foreground); }
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+  .rk { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; font-size: 12px; }
+  .rk .n { font-size: 10.5px; font-weight: 700; color: var(--muted-foreground); text-align: center; }
+  .rk .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rk .s { font-weight: 600; }
+  .rk .bar { grid-column: 2 / 4; height: 4px; border-radius: 9px; background: var(--muted); overflow: hidden; }
+  .rk .bar span { display: block; height: 100%; border-radius: inherit; width: 0;
+                  background: linear-gradient(90deg, color-mix(in oklch, var(--primary) 55%, transparent), var(--primary));
+                  transition: width .8s cubic-bezier(.3,.7,.3,1); }
+  .od { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 8px; font-size: 12px; align-items: center; }
+  .od b { font-weight: 600; }
+  .od .s { font-weight: 600; text-align: right; }
+  .od .m { font-size: 11px; color: var(--muted-foreground); display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .tag { font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 999px; line-height: 17px; white-space: nowrap; }
+  .tag.ok { color: var(--up); background: color-mix(in oklch, var(--up) 13%, transparent); }
+  .tag.wait { color: var(--warning); background: color-mix(in oklch, var(--warning) 14%, transparent); }
+  .tag.bad { color: var(--down); background: color-mix(in oklch, var(--down) 13%, transparent); }
+  .tag.ship { color: var(--muted-foreground); background: var(--muted); }
+  .empty { font-size: 12px; color: var(--muted-foreground); padding: 6px 0; }
+
+  /* states */
+  .note { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; padding: 8px 10px; border-radius: 10px;
+          border: 1px solid color-mix(in oklch, var(--warning) 35%, transparent);
+          background: color-mix(in oklch, var(--warning) 9%, transparent); }
+  .note svg.i { color: var(--warning); margin-top: 1px; }
+  .setup { display: grid; gap: 10px; padding: 6px 2px; font-size: 12.5px; }
+  .setup ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+  .setup code { font-family: var(--mx-font-mono, ui-monospace, monospace); font-size: 11.5px; padding: 1px 5px;
+                border-radius: 5px; background: var(--muted); }
+  .sk { border-radius: var(--r); background: var(--muted); animation: sk 1.4s ease-in-out infinite; }
+  @keyframes sk { 50% { opacity: .55; } }
+  .demo { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 1px 6px; border-radius: 999px;
+          color: var(--primary); background: color-mix(in oklch, var(--primary) 14%, transparent); }
+  .fade { animation: fade .35s ease-out; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .chart .draw { stroke-dashoffset: 0; }
+  }
+</style>
+
+<div class="w" id="app" aria-live="polite">
+  <div class="sk" style="height:34px"></div>
+  <div class="sk" style="height:230px"></div>
+  <div class="sk" style="height:64px"></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const PERIODS = [1, 7, 30];
+  const REFRESH_MS = 5 * 60 * 1000;
+  const app = document.getElementById("app");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let state = { res: null, period: 7, demo: false, tried: false, loading: false };
+
+  const T = {
+    fr: { p: { 1: "Auj.", 7: "7 j", 30: "30 j" }, sales: "Chiffre d'affaires", orders: "Commandes", aov: "Panier moyen",
+          visitors: "Visiteurs", conv: "Conversion", vsPrev: (p) => p === 1 ? "hier" : `${p} j précédents`,
+          vs: "vs", prev: "Période précédente", cur: "Période", top: "Top produits", geo: "Pays", last: "Dernières commandes",
+          noTop: "Aucune vente sur la période", noLast: "Aucune commande", noGeo: "Pas de données pays",
+          updated: (t) => `mis à jour ${t}`, now: "à l'instant", ago: (n, u) => `il y a ${n} ${u}`, min: "min", h: "h", d: "j",
+          refresh: "Actualiser", yesterday: "Hier", sep: " : ",
+          noVisits: "visiteurs indisponibles", today: "aujourd'hui", fallback: "Montants bruts des commandes (ShopifyQL non autorisé : ajoutez le scope read_reports pour les ventes nettes, les visiteurs et les pays).",
+          truncated: "Plus de 1000 commandes sur 60 jours : chiffres partiels.",
+          err: { auth: "Shopify refuse le jeton : vérifiez la clé et ses scopes.", network: "Shopify ne répond pas.",
+                 timeout: "Shopify est trop lent à répondre.", http: "Erreur Shopify.", query: "Requête refusée par Shopify.",
+                 access: "Accès refusé : scope read_orders manquant.", failed: "Impossible de charger les stats." },
+          stale: "Données en cache affichées.",
+          setupTitle: "Connecter votre boutique Shopify",
+          setup: ["Admin Shopify : Paramètres → Applications → Développer des applications → Créer une application.",
+                  "Scopes Admin API : <code>read_orders</code> et <code>read_reports</code> (ventes nettes, visiteurs, pays).",
+                  "Installez l'application, copiez le jeton <code>shpat_…</code>.",
+                  "Harness → Réglages → Clés : <code>SHOPIFY_STORE</code> (maboutique.myshopify.com) et <code>SHOPIFY_ADMIN_TOKEN</code>."],
+          demoBtn: "Voir la démo", back: "Quitter la démo", paid: "payée", pending: "en attente", refunded: "remboursée",
+          partially_refunded: "remb. partiel", authorized: "autorisée", voided: "annulée", canceled: "annulée",
+          fulfilled: "expédiée", unfulfilled: "à expédier", partially_fulfilled: "partielle" },
+    en: { p: { 1: "Today", 7: "7d", 30: "30d" }, sales: "Sales", orders: "Orders", aov: "Avg. order",
+          visitors: "Visitors", conv: "Conversion", vsPrev: (p) => p === 1 ? "yesterday" : `previous ${p} days`,
+          vs: "vs", prev: "Previous period", cur: "Period", top: "Top products", geo: "Countries", last: "Latest orders",
+          noTop: "No sales in this period", noLast: "No orders", noGeo: "No country data",
+          updated: (t) => `updated ${t}`, now: "just now", ago: (n, u) => `${n} ${u} ago`, min: "min", h: "h", d: "d",
+          refresh: "Refresh", yesterday: "Yesterday", sep: ": ",
+          noVisits: "visitors unavailable", today: "today", fallback: "Gross order totals (ShopifyQL not allowed: add the read_reports scope for net sales, visitors and countries).",
+          truncated: "More than 1000 orders in 60 days: partial figures.",
+          err: { auth: "Shopify refused the token: check the key and its scopes.", network: "Shopify is not answering.",
+                 timeout: "Shopify is too slow to answer.", http: "Shopify error.", query: "Query refused by Shopify.",
+                 access: "Access denied: read_orders scope missing.", failed: "Could not load the stats." },
+          stale: "Showing cached data.",
+          setupTitle: "Connect your Shopify store",
+          setup: ["Shopify admin: Settings → Apps and sales channels → Develop apps → Create an app.",
+                  "Admin API scopes: <code>read_orders</code> and <code>read_reports</code> (net sales, visitors, countries).",
+                  "Install the app and copy the <code>shpat_…</code> token.",
+                  "Harness → Settings → Keys: <code>SHOPIFY_STORE</code> (myshop.myshopify.com) and <code>SHOPIFY_ADMIN_TOKEN</code>."],
+          demoBtn: "See the demo", back: "Leave the demo", paid: "paid", pending: "pending", refunded: "refunded",
+          partially_refunded: "part. refunded", authorized: "authorized", voided: "voided", canceled: "canceled",
+          fulfilled: "fulfilled", unfulfilled: "to ship", partially_fulfilled: "partial" },
+  };
+  let L = T.en, lang = "en";
+
+  // ---------------------------------------------------------------- DOM helpers
+  const NS = "http://www.w3.org/2000/svg";
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") el.className = v; else if (k === "text") el.textContent = v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+    }
+    for (const c of kids.flat()) if (c != null) el.append(c);
+    return el;
+  }
+  function s(tag, attrs) {
+    const el = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) if (v != null) el.setAttribute(k, v);
+    return el;
+  }
+  const ICONS = {
+    bag: "M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0",
+    refresh: "M21 12a9 9 0 1 1-2.64-6.36L21 8M21 3v5h-5",
+    up: "m7 17 10-10M8 7h9v9", down: "m7 7 10 10M17 8v9H8", flat: "M5 12h14",
+    trophy: "M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3",
+    receipt: "M4 2v20l3-2 3 2 3-2 3 2 3-2 2 2V2l-2 2-3-2-3 2-3-2-3 2zM8 8h8M8 12h8M8 16h5",
+    globe: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20",
+    alert: "M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+    play: "M6 4l14 8-14 8z",
+  };
+  function icon(name) {
+    const el = s("svg", { viewBox: "0 0 24 24", class: "i", "aria-hidden": "true" });
+    el.append(s("path", { d: ICONS[name] }));
+    return el;
+  }
+
+  // ---------------------------------------------------------------- formatting
+  let cur = "USD";
+  const money = (v, compact) => {
+    const big = Math.abs(v) >= 1000;
+    try {
+      return new Intl.NumberFormat(lang, { style: "currency", currency: cur, notation: compact && big ? "compact" : "standard",
+        maximumFractionDigits: compact ? (big ? 1 : 0) : big ? 0 : 2,
+        minimumFractionDigits: compact || big ? 0 : 2 }).format(v);
+    } catch { return `${Math.round(v)} ${cur}`; }
+  };
+  const num = (v) => new Intl.NumberFormat(lang).format(Math.round(v));
+  const pct = (v) => new Intl.NumberFormat(lang, { style: "percent", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+  const day = (iso, opts) => new Date(iso + "T12:00:00").toLocaleDateString(lang, opts || { day: "numeric", month: "short" });
+  function ago(ts) {
+    const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+    if (m < 1) return L.now;
+    if (m < 60) return L.ago(m, L.min);
+    if (m < 1440) return L.ago(Math.round(m / 60), L.h);
+    return L.ago(Math.round(m / 1440), L.d);
+  }
+
+  // ---------------------------------------------------------------- figures of a period
+  function sum(days) {
+    const o = { s: 0, o: 0, v: 0, hasV: false };
+    for (const d of days) { o.s += d.s; o.o += d.o; if (d.v != null) { o.v += d.v; o.hasV = true; } }
+    return o;
+  }
+  function figures(data, p) {
+    const days = data.days, now = days.slice(-p), before = days.slice(-2 * p, -p);
+    const a = sum(now), b = sum(before);
+    const kpi = (x) => ({ sales: x.s, orders: x.o, aov: x.o ? x.s / x.o : 0,
+                          visitors: data.visitors && x.hasV ? x.v : null,
+                          conv: data.visitors && x.hasV && x.v ? x.o / x.v : null });
+    return { cur: kpi(a), prev: kpi(b), days: now, prevDays: before };
+  }
+  function delta(a, b) {
+    if (a == null || b == null || !isFinite(a) || !isFinite(b) || b === 0) return null;
+    return (a - b) / Math.abs(b);
+  }
+  function pill(d) {
+    if (d == null) return null;
+    const k = Math.abs(d) < 0.005 ? "flat" : d > 0 ? "up" : "down";
+    const txt = new Intl.NumberFormat(lang, { style: "percent", maximumFractionDigits: Math.abs(d) < 0.1 ? 1 : 0 }).format(Math.abs(d));
+    return h("span", { class: `pill ${k}` }, icon(k), txt);
+  }
+
+  // ---------------------------------------------------------------- count-up
+  function countUp(el, to, fmt) {
+    if (reduce) { el.textContent = fmt(to); return; }
+    const t0 = performance.now(), dur = 700;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(to * e);
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // ---------------------------------------------------------------- chart
+  function chart(box, data, f, p) {
+    const pts = p === 1 ? data.days.slice(-14) : f.days;
+    const prev = p === 1 ? [] : f.prevDays;
+    const tip = h("div", { class: "tip" });
+    box.replaceChildren(tip);
+    const W = Math.max(240, box.clientWidth), H = box.clientHeight || 150, padL = 4, padR = 4, padT = 10, padB = 18;
+    const max = Math.max(1, ...pts.map((d) => d.s), ...prev.map((d) => d.s)) * 1.12;
+    const n = pts.length, x = (i) => padL + (n === 1 ? (W - padL - padR) / 2 : (i * (W - padL - padR)) / (n - 1));
+    const y = (v) => padT + (1 - v / max) * (H - padT - padB);
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", role: "img",
+                           "aria-label": `${L.sales} ${pts.length ? `${day(pts[0].d)} – ${day(pts[n - 1].d)}` : ""}` });
+    const defs = s("defs"), g = s("linearGradient", { id: "fill", x1: 0, x2: 0, y1: 0, y2: 1 });
+    const st1 = s("stop", { offset: "0%" }); st1.style.stopColor = "var(--primary)"; st1.style.stopOpacity = ".32";
+    const st2 = s("stop", { offset: "100%" }); st2.style.stopColor = "var(--primary)"; st2.style.stopOpacity = "0";
+    g.append(st1, st2); defs.append(g); svg.append(defs);
+    const grid = s("g", { class: "grid" });
+    for (const k of [0.25, 0.5, 0.75]) grid.append(s("line", { x1: 0, x2: W, y1: y(max * k), y2: y(max * k) }));
+    svg.append(grid);
+    // smooth path (monotone-ish cubic through the points)
+    const path = (arr) => {
+      if (!arr.length) return "";
+      const P = arr.map((d, i) => [x(i), y(d.s)]);
+      let dd = `M${P[0][0]},${P[0][1]}`;
+      for (let i = 1; i < P.length; i++) {
+        const [x0, y0] = P[i - 1], [x1, y1] = P[i], cx = (x0 + x1) / 2;
+        dd += ` C${cx},${y0} ${cx},${y1} ${x1},${y1}`;
+      }
+      return dd;
+    };
+    if (prev.length === n) svg.append(s("path", { class: "prev", d: path(prev) }));
+    const line = path(pts);
+    svg.append(s("path", { class: "area", d: `${line} L${x(n - 1)},${H - padB} L${x(0)},${H - padB} Z` }));
+    const ln = s("path", { class: "line draw", d: line });
+    svg.append(ln);
+    // x axis: first, middle, last
+    const ticks = n > 2 ? [0, Math.floor((n - 1) / 2), n - 1] : [...Array(n).keys()];
+    for (const i of ticks) {
+      const t = s("text", { class: "ax", x: x(i), y: H - 3, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" });
+      t.textContent = i === n - 1 ? L.today : day(pts[i].d);
+      svg.append(t);
+    }
+    svg.append(s("circle", { class: "today", cx: x(n - 1), cy: y(pts[n - 1].s), r: 3.2 }));
+    const cross = s("line", { class: "cross", y1: padT, y2: H - padB, visibility: "hidden" });
+    const dot = s("circle", { class: "dot", r: 4.5, visibility: "hidden" });
+    svg.append(cross, dot);
+    box.append(svg);
+    try { const len = ln.getTotalLength(); ln.style.setProperty("--len", len); } catch { ln.classList.remove("draw"); }
+
+    const show = (cx) => {
+      const r = box.getBoundingClientRect(), px = ((cx - r.left) / r.width) * W;
+      const i = Math.max(0, Math.min(n - 1, Math.round(((px - padL) / (W - padL - padR)) * (n - 1))));
+      const d = pts[i], X = x(i);
+      cross.setAttribute("x1", X); cross.setAttribute("x2", X); cross.setAttribute("visibility", "visible");
+      dot.setAttribute("cx", X); dot.setAttribute("cy", y(d.s)); dot.setAttribute("visibility", "visible");
+      tip.replaceChildren(
+        h("div", { class: "muted", text: day(d.d, { weekday: "short", day: "numeric", month: "short" }) }),
+        h("b", { text: money(d.s) }),
+        h("div", { text: `${num(d.o)} ${L.orders.toLowerCase()}${d.v != null ? ` · ${num(d.v)} ${L.visitors.toLowerCase()}` : ""}` }),
+        prev[i] ? h("div", { class: "muted", text: `${L.prev}${L.sep}${money(prev[i].s)}` }) : "");
+      const left = (X / W) * r.width, half = tip.offsetWidth / 2;
+      tip.style.left = `${Math.max(half, Math.min(r.width - half, left))}px`;
+      tip.style.top = `${Math.max(0, (y(d.s) / H) * r.height - tip.offsetHeight - 10)}px`;
+      tip.classList.add("on");
+    };
+    const hide = () => { tip.classList.remove("on"); cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); };
+    box.onpointermove = (e) => show(e.clientX);
+    box.onpointerdown = (e) => show(e.clientX);
+    box.onpointerleave = hide;
+  }
+
+  function spark(values) {
+    const v = values.filter((x) => x != null);
+    if (v.length < 2) return null;
+    const W = 54, H = 20, max = Math.max(...v), min = Math.min(...v), span = max - min || 1;
+    const d = v.map((x, i) => `${i ? "L" : "M"}${((i * W) / (v.length - 1)).toFixed(1)},${(H - 2 - ((x - min) / span) * (H - 4)).toFixed(1)}`).join(" ");
+    const el = s("svg", { class: "spark", viewBox: `0 0 ${W} ${H}`, "aria-hidden": "true" });
+    el.append(s("path", { d }));
+    return el;
+  }
+
+  // ---------------------------------------------------------------- views
+  function header(data, res) {
+    const seg = h("div", { class: "seg", role: "group" });
+    const ind = h("i");
+    seg.append(ind);
+    for (const p of PERIODS) {
+      seg.append(h("button", { type: "button", "aria-pressed": String(p === state.period), text: L.p[p],
+                               onclick: () => { state.period = p; render(); } }));
+    }
+    requestAnimationFrame(() => {
+      const b = seg.querySelector('[aria-pressed="true"]');
+      if (b) { ind.style.left = `${b.offsetLeft}px`; ind.style.width = `${b.offsetWidth}px`; }
+    });
+    const rf = h("button", { type: "button", class: "btn" + (state.loading ? " spin" : ""), title: L.refresh,
+                             "aria-label": L.refresh, onclick: () => load(true) }, icon("refresh"));
+    const sub = h("span", { class: "muted" }, h("i", { class: "live" + (res.error ? " off" : "") }),
+                  h("span", { "data-ago": data.at, text: L.updated(ago(data.at * 1000)) }));
+    if (res.demo) sub.append(h("span", { class: "demo", text: "DEMO" }));
+    return h("div", { class: "hd" }, h("div", { class: "logo" }, icon("bag")),
+             h("div", { class: "who" }, h("b", { text: data.shop.name }), sub), seg, rf);
+  }
+
+  function hero(data, f, p) {
+    const big = h("div", { class: "big" });
+    countUp(big, f.cur.sales, (v) => money(v));
+    const cmp = h("div", { class: "cmp" });
+    if (p === 1) cmp.append(h("span", { class: "muted", text: `${L.yesterday}${L.sep}${money(f.prev.sales)}` }));
+    else cmp.append(pill(delta(f.cur.sales, f.prev.sales)) || "",
+                    h("span", { class: "muted", text: `${L.vs} ${L.vsPrev(p)} · ${money(f.prev.sales)}` }));
+    const legend = p === 1 ? null : h("div", { class: "legend" },
+      h("span", {}, h("i"), L.cur), h("span", {}, h("i", { class: "prev" }), L.prev));
+    const box = h("div", { class: "chart" });
+    const el = h("div", { class: "hero" },
+      h("div", { class: "top" }, h("div", {}, h("div", { class: "lbl", text: L.sales }), big, cmp), legend), box);
+    requestAnimationFrame(() => chart(box, data, f, p));
+    return el;
+  }
+
+  function kpis(data, f, p) {
+    const series = data.days.slice(-Math.max(p, 14));
+    const tiles = [
+      [L.orders, num(f.cur.orders), f.prev.orders, f.cur.orders, series.map((d) => d.o)],
+      [L.aov, money(f.cur.aov), f.prev.aov, f.cur.aov, series.map((d) => (d.o ? d.s / d.o : null))],
+      [L.visitors, f.cur.visitors == null ? "–" : num(f.cur.visitors), f.prev.visitors, f.cur.visitors, series.map((d) => d.v)],
+      [L.conv, f.cur.conv == null ? "–" : pct(f.cur.conv), f.prev.conv, f.cur.conv,
+       series.map((d) => (d.v ? d.o / d.v : null))],
+    ];
+    return h("div", { class: "kpis" }, tiles.map(([label, value, prev, curV, ser]) => {
+      const missing = curV == null;
+      const hint = missing ? L.noVisits
+        : p === 1 ? `${L.yesterday}${L.sep}${label === L.aov ? money(prev || 0) : label === L.conv ? (prev == null ? "–" : pct(prev)) : num(prev || 0)}`
+        : `${L.vs} ${L.vsPrev(p)}`;
+      return h("div", { class: "kpi" },
+        h("div", { class: "lbl", text: label }),
+        h("div", { class: "row" }, h("div", { class: "v", text: value }), missing ? null : spark(ser)),
+        h("div", { class: "row" }, h("div", { class: "h", text: hint }), p === 1 || missing ? null : pill(delta(curV, prev))));
+    }));
+  }
+
+  function ranked(title, ic, items, empty, label, sub) {
+    const max = Math.max(1, ...items.map((x) => x.s));
+    const ul = h("ul", { class: "rows" });
+    items.forEach((x, i) => {
+      const bar = h("span");
+      ul.append(h("li", { class: "rk", title: x.t || x.c },
+        h("span", { class: "n", text: String(i + 1) }), h("span", { class: "t", text: label(x) }),
+        h("span", { class: "s", text: money(x.s, true) }), h("div", { class: "bar" }, bar)));
+      requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.width = `${Math.max(3, (x.s / max) * 100)}%`; }));
+    });
+    return h("div", { class: "pn" }, h("h3", {}, icon(ic), title, sub ? h("small", { text: sub }) : null),
+             items.length ? ul : h("div", { class: "empty", text: empty }));
+  }
+
+  function lastOrders(data) {
+    const ul = h("ul", { class: "rows" });
+    for (const o of data.last.slice(0, 5)) {
+      const payK = o.canceled ? "canceled" : o.pay;
+      const tone = o.canceled || /refund|void/.test(o.pay) ? "bad" : o.pay === "paid" ? "ok" : "wait";
+      const m = h("span", { class: "m" }, h("span", { text: ago(Date.parse(o.at)) }),
+                  h("span", { class: `tag ${tone}`, text: L[payK] || payK.replace(/_/g, " ") }));
+      if (!o.canceled && o.ship) m.append(h("span", { class: "tag ship", text: L[o.ship] || o.ship.replace(/_/g, " ") }));
+      ul.append(h("li", { class: "od" }, h("b", { text: o.n }), h("span", { class: "s", text: money(o.total) }),
+                  h("span", { style: "grid-column:1/3" }, m)));
+    }
+    return h("div", { class: "pn" }, h("h3", {}, icon("receipt"), L.last),
+             data.last.length ? ul : h("div", { class: "empty", text: L.noLast }));
+  }
+
+  function notes(res) {
+    const out = [];
+    const add = (t) => out.push(h("div", { class: "note" }, icon("alert"), h("span", { text: t })));
+    if (res.error) add(`${L.err[res.error] || L.err.failed} ${L.stale}`);
+    if (res.data && res.data.source === "orders") add(L.fallback);
+    if (res.data && res.data.truncated) add(L.truncated);
+    return out;
+  }
+
+  function setup(res) {
+    const ol = h("ol");
+    for (const step of L.setup) {
+      // the steps are static strings of this file (no data): <code> tags are the only markup
+      const li = h("li"); li.innerHTML = step; ol.append(li);
+    }
+    const kids = [h("div", { class: "hd" }, h("div", { class: "logo" }, icon("bag")),
+                    h("div", { class: "who" }, h("b", { text: L.setupTitle })))];
+    if (res.error && res.error !== "missing_keys")
+      kids.push(h("div", { class: "note" }, icon("alert"), h("span", { text: `${L.err[res.error] || L.err.failed} ${res.message || ""}` })));
+    kids.push(ol, h("div", {}, h("button", { type: "button", class: "ui-btn ui-sm",
+                                            onclick: () => { state.demo = state.tried = true; load(true); } }, icon("play"), L.demoBtn)));
+    return h("div", { class: "setup fade" }, kids);
+  }
+
+  function render() {
+    const res = state.res;
+    if (!res) return;
+    lang = res.lang === "fr" ? "fr" : "en"; L = T[lang];
+    document.documentElement.lang = lang;
+    if (!res.ok || !res.data) { app.replaceChildren(setup(res)); return fit(); }
+    const data = res.data, p = state.period, f = figures(data, p);
+    cur = data.shop.currency || "USD";
+    const per = (data.periods || {})[String(p)] || { top: [], countries: [] };
+    const panels = [ranked(L.top, "trophy", per.top, L.noTop, (x) => x.t, L.p[p]), lastOrders(data)];
+    if (data.visitors || (per.countries && per.countries.length))
+      panels.splice(1, 0, ranked(L.geo, "globe", per.countries, L.noGeo, (x) => x.c, L.p[p]));
+    const kids = [header(data, res), ...notes(res), hero(data, f, p), kpis(data, f, p), h("div", { class: "panels" }, panels)];
+    if (state.tried) kids.push(h("div", {}, h("button", { type: "button", class: "ui-btn ui-ghost ui-sm",
+                                                         onclick: () => { state.demo = state.tried = false; load(false); } }, L.back)));
+    app.replaceChildren(...kids);
+    fit();
+  }
+
+  // ---------------------------------------------------------------- sizing, loading
+  let lastH = 0;
+  function fit() {
+    requestAnimationFrame(() => {
+      const hgt = Math.ceil(app.getBoundingClientRect().height) + 6;
+      if (Math.abs(hgt - lastH) > 2) { lastH = hgt; maxxing.resize(hgt); }
+    });
+  }
+  let lastW = 0, rt = 0;
+  new ResizeObserver(() => {
+    const w = app.clientWidth;
+    if (Math.abs(w - lastW) < 8) return fit();
+    lastW = w; clearTimeout(rt); rt = setTimeout(render, 120);
+  }).observe(app);
+
+  async function load(force) {
+    if (state.loading) return;
+    state.loading = true;
+    const rb = app.querySelector(".btn"); if (rb) rb.classList.add("spin");
+    const query = {};
+    if (force) query.force = "1";
+    if (state.demo) query.demo = "1";
+    try {
+      state.res = await maxxing.api("stats", { query });
+      if (state.res && state.res.demo) state.demo = true;
+    } catch (e) {
+      state.res = state.res && state.res.data ? { ...state.res, error: "failed" } : { ok: false, lang, error: "failed", message: String(e.message || e) };
+    } finally {
+      state.loading = false;
+      render();
+    }
+  }
+
+  setInterval(() => {
+    for (const el of app.querySelectorAll("[data-ago]")) el.textContent = L.updated(ago(Number(el.dataset.ago) * 1000));
+  }, 30000);
+  setInterval(() => { if (!document.hidden) load(false); }, REFRESH_MS);
+  load(false);
+})();
+</script>
